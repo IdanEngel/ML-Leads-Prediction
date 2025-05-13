@@ -6,6 +6,10 @@ import traceback
 import pandas as pd
 from database.models import Base, LeadRecord
 from database.db import engine, SessionLocal
+from contextlib import contextmanager
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Initialize DB and app
 Base.metadata.create_all(bind=engine)
@@ -59,22 +63,33 @@ class LeadInput(BaseModel):
     Last_Notable_Activity: str
 
 
+@contextmanager
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 @app.post("/predict")
 def predict(lead: LeadInput):
     try:
         lead_dict = lead.model_dump()
-
-        db = SessionLocal()
-        existing = db.query(LeadRecord).filter(LeadRecord.Lead_Number == lead_dict['Lead_Number']).first()
-        if existing:
-            db.close()
-            print("Score:", existing.score)
-            # If the lead already exists, return a message
-            return { "message": "Lead already exists in the database."}
+        with get_db() as db:
+            existing = db.query(LeadRecord).filter(LeadRecord.Lead_Number == lead_dict['Lead_Number']).first()
+            if existing:
+                print("Score:", existing.score)
+                # If the lead already exists, return a message
+                return { "message": "Lead already exists in the database."}
 
         normalized_dict = {key.replace('_', ' '): value for key, value in lead_dict.items()}
         df = pd.DataFrame([normalized_dict])
+        # Ensure all columns are present
+        missing = set(model.feature_names_in_) - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing columns: {missing}")
+
         for col in list(label_encoders):
             df[col] = df[col].fillna('unknown')  # Fill missing with placeholder
             df[col] = label_encoders[col].transform(df[col])
@@ -86,18 +101,20 @@ def predict(lead: LeadInput):
 
 
         score = float(np.round(float(prob) * 100, 2))
-        print("Score:", score)
-        # Save raw (not encoded) input + score to DB
+        logger.info("The Lead Score Is: %s", score)
+
+        # Save  input + score to DB
         record = LeadRecord(**lead_dict, score=score)
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        db.close()
+        with get_db() as db:
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            db.close()
 
         return {"score": score}
 
     except Exception as e:
-        print("❌ Error occurred:", str(e))
+        print("Error occurred:", str(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
