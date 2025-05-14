@@ -22,6 +22,9 @@ with open("model.pkl", "rb") as f:
 with open("label_encoders.pkl", "rb") as f:
     label_encoders = pickle.load(f)
 
+# with open("model_pipeline.pkl", "rb") as f:
+#     pipeline_model = pickle.load(f)
+
 from typing import Optional
 
 
@@ -76,6 +79,7 @@ def get_db():
 def predict(lead: LeadInput):
     try:
         lead_dict = lead.model_dump()
+
         with get_db() as db:
             existing = db.query(LeadRecord).filter(LeadRecord.Lead_Number == lead_dict['Lead_Number']).first()
             if existing:
@@ -94,13 +98,13 @@ def predict(lead: LeadInput):
             df[col] = df[col].fillna('unknown')  # Fill missing with placeholder
             df[col] = label_encoders[col].transform(df[col])
 
-        df = df.fillna(value=np.nan)
         df = df.astype(float)
+
         prob = model.predict_proba(df)[0][1]
 
 
-
         score = float(np.round(float(prob) * 100, 2))
+        print("real score", score)
         logger.info("The Lead Score Is: %s", score)
 
         # Save  input + score to DB
@@ -118,3 +122,11 @@ def predict(lead: LeadInput):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+#Pipeline test (Ignore this)
+    # test_df = pd.DataFrame([normalized_dict])
+    #
+    # test_prob = pipeline_model.predict_proba(test_df)[0][1]
+    # test_score = float(np.round(float(test_prob) * 100, 2))
+    #
+    # print("The Lead Score Is: %s", test_score)
